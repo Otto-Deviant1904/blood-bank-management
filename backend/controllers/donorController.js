@@ -8,8 +8,8 @@ const getDonorProfile = async (req, res) => {
     const { id } = req.params;
 
     const result = await pool.query(
-      'SELECT * FROM donor WHERE donor_id = $1',
-      [id]
+      'SELECT * FROM donor WHERE donor_id = $1 AND tenant_id = $2',
+      [id, req.user.tenant_id]
     );
 
     if (result.rows.length === 0) {
@@ -29,8 +29,8 @@ const getDonorProfileByUserId = async (req, res) => {
     const { user_id } = req.params;
 
     const result = await pool.query(
-      'SELECT * FROM donor WHERE user_id = $1',
-      [user_id]
+      'SELECT * FROM donor WHERE user_id = $1 AND tenant_id = $2',
+      [user_id, req.user.tenant_id]
     );
 
     if (result.rows.length === 0) {
@@ -51,8 +51,8 @@ const updateDonorProfile = async (req, res) => {
     const { name, age, blood_group, phone, email, city } = req.body;
 
     const result = await pool.query(
-      'UPDATE donor SET name = $1, age = $2, blood_group = $3, phone = $4, email = $5, city = $6 WHERE donor_id = $7 RETURNING *',
-      [name, age, blood_group, phone, email, city, id]
+      'UPDATE donor SET name = $1, age = $2, blood_group = $3, phone = $4, email = $5, city = $6 WHERE donor_id = $7 AND tenant_id = $8 RETURNING *',
+      [name, age, blood_group, phone, email, city, id, req.user.tenant_id]
     );
 
     if (result.rows.length === 0) {
@@ -70,8 +70,8 @@ const updateDonorProfile = async (req, res) => {
 const searchDonors = async (req, res) => {
   try {
     const { blood_group, city } = req.query;
-    let query = 'SELECT * FROM donor WHERE 1=1';
-    const values = [];
+    let query = 'SELECT * FROM donor WHERE tenant_id = $1';
+    const values = [req.user.tenant_id];
 
     if (blood_group) {
       query += ' AND blood_group = $' + (values.length + 1);
@@ -99,8 +99,8 @@ const recordDonation = async (req, res) => {
 
     // Check donor eligibility (56 days since last donation)
     const donorResult = await pool.query(
-      'SELECT last_donation_date FROM donor WHERE donor_id = $1',
-      [donor_id]
+      'SELECT last_donation_date FROM donor WHERE donor_id = $1 AND tenant_id = $2',
+      [donor_id, req.user.tenant_id]
     );
 
     if (donorResult.rows.length === 0) {
@@ -122,15 +122,15 @@ const recordDonation = async (req, res) => {
 
     // Update last donation date
     const updateResult = await pool.query(
-      'UPDATE donor SET last_donation_date = CURRENT_DATE WHERE donor_id = $1 RETURNING *',
-      [donor_id]
+      'UPDATE donor SET last_donation_date = CURRENT_DATE WHERE donor_id = $1 AND tenant_id = $2 RETURNING *',
+      [donor_id, req.user.tenant_id]
     );
 
     // Add units to blood stock
     const bloodGroup = updateResult.rows[0].blood_group;
     await pool.query(
-      'UPDATE blood_stock SET units_available = units_available + $1 WHERE blood_group = $2',
-      [units_donated, bloodGroup]
+      'UPDATE blood_stock SET units_available = units_available + $1 WHERE blood_group = $2 AND tenant_id = $3',
+      [units_donated, bloodGroup, req.user.tenant_id]
     );
 
     res.json({
@@ -151,8 +151,8 @@ const getDonationHistory = async (req, res) => {
     const { id } = req.params;
 
     const donorResult = await pool.query(
-      'SELECT donor_id, last_donation_date FROM donor WHERE donor_id = $1',
-      [id]
+      'SELECT donor_id, last_donation_date FROM donor WHERE donor_id = $1 AND tenant_id = $2',
+      [id, req.user.tenant_id]
     );
 
     if (donorResult.rows.length === 0) {
@@ -171,11 +171,12 @@ const getDonationHistory = async (req, res) => {
        FROM donation_application da
        JOIN blood_request br ON da.request_id = br.request_id
        JOIN recipient r ON br.recipient_id = r.recipient_id
-       WHERE da.donor_id = $1
-         AND da.status = 'Accepted'
-         AND br.status = $2
-       ORDER BY br.request_date DESC, da.updated_at DESC`,
-      [id, REQUEST_STATUSES.COMPLETED]
+        WHERE da.donor_id = $1
+          AND da.status = 'Accepted'
+          AND br.status = $2
+          AND br.tenant_id = $3
+        ORDER BY br.request_date DESC, da.updated_at DESC`,
+      [id, REQUEST_STATUSES.COMPLETED, req.user.tenant_id]
     );
 
     res.json({
@@ -198,8 +199,8 @@ const getDonationHistoryByUserId = async (req, res) => {
     const { user_id } = req.params;
 
     const donorResult = await pool.query(
-      'SELECT donor_id, last_donation_date FROM donor WHERE user_id = $1',
-      [user_id]
+      'SELECT donor_id, last_donation_date FROM donor WHERE user_id = $1 AND tenant_id = $2',
+      [user_id, req.user.tenant_id]
     );
 
     if (donorResult.rows.length === 0) {
@@ -220,11 +221,12 @@ const getDonationHistoryByUserId = async (req, res) => {
        FROM donation_application da
        JOIN blood_request br ON da.request_id = br.request_id
        JOIN recipient r ON br.recipient_id = r.recipient_id
-       WHERE da.donor_id = $1
-         AND da.status = 'Accepted'
-         AND br.status = $2
-       ORDER BY br.request_date DESC, da.updated_at DESC`,
-      [donorId, REQUEST_STATUSES.COMPLETED]
+        WHERE da.donor_id = $1
+          AND da.status = 'Accepted'
+          AND br.status = $2
+          AND br.tenant_id = $3
+        ORDER BY br.request_date DESC, da.updated_at DESC`,
+      [donorId, REQUEST_STATUSES.COMPLETED, req.user.tenant_id]
     );
 
     res.json({

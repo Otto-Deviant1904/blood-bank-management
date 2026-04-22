@@ -7,8 +7,8 @@ const getRecipientProfile = async (req, res) => {
     const { id } = req.params;
 
     const result = await pool.query(
-      'SELECT * FROM recipient WHERE recipient_id = $1',
-      [id]
+      'SELECT * FROM recipient WHERE recipient_id = $1 AND tenant_id = $2',
+      [id, req.user.tenant_id]
     );
 
     if (result.rows.length === 0) {
@@ -28,8 +28,8 @@ const getRecipientProfileByUserId = async (req, res) => {
     const { user_id } = req.params;
 
     const result = await pool.query(
-      'SELECT * FROM recipient WHERE user_id = $1',
-      [user_id]
+      'SELECT * FROM recipient WHERE user_id = $1 AND tenant_id = $2',
+      [user_id, req.user.tenant_id]
     );
 
     if (result.rows.length === 0) {
@@ -48,12 +48,13 @@ const createBloodRequest = async (req, res) => {
   const client = await pool.connect();
   try {
     await ensureWorkflowSchema();
+    await client.query('BEGIN');
 
     const { recipient_id, units_requested, urgency_flag, blood_group_needed, hospital_location } = req.body;
 
     const ownerCheck = await client.query(
-      'SELECT recipient_id, blood_group_needed FROM recipient WHERE user_id = $1',
-      [req.user.user_id]
+      'SELECT recipient_id, blood_group_needed, tenant_id, site_id FROM recipient WHERE user_id = $1 AND tenant_id = $2',
+      [req.user.user_id, req.user.tenant_id]
     );
     if (ownerCheck.rows.length === 0 || ownerCheck.rows[0].recipient_id !== Number(recipient_id)) {
       await client.query('ROLLBACK');
@@ -68,15 +69,15 @@ const createBloodRequest = async (req, res) => {
       });
     }
 
-    await client.query('BEGIN');
-
     const result = await client.query(
       `INSERT INTO blood_request
-       (recipient_id, units_requested, request_date, urgency_flag, status, blood_group_needed, hospital_location)
-       VALUES ($1, $2, CURRENT_DATE, $3, $4, $5, $6)
+       (recipient_id, tenant_id, site_id, units_requested, request_date, urgency_flag, status, blood_group_needed, hospital_location)
+       VALUES ($1, $2, $3, $4, CURRENT_DATE, $5, $6, $7, $8)
        RETURNING *`,
       [
         recipient_id,
+        ownerCheck.rows[0].tenant_id,
+        ownerCheck.rows[0].site_id,
         units_requested,
         urgency_flag,
         REQUEST_STATUSES.PENDING_VERIFICATION,
@@ -106,8 +107,8 @@ const getBloodRequestStatus = async (req, res) => {
     const { id } = req.params;
 
     const result = await pool.query(
-      'SELECT * FROM blood_request WHERE request_id = $1',
-      [id]
+      'SELECT * FROM blood_request WHERE request_id = $1 AND tenant_id = $2',
+      [id, req.user.tenant_id]
     );
 
     if (result.rows.length === 0) {
@@ -129,15 +130,15 @@ const searchBloodRequests = async (req, res) => {
     const { status, urgency_flag, recipient_id, blood_group } = req.query;
     let query = `SELECT br.*, r.blood_group_needed, r.name AS recipient_name
                  FROM blood_request br
-                 JOIN recipient r ON br.recipient_id = r.recipient_id
-                 WHERE 1=1`;
-    const values = [];
+                  JOIN recipient r ON br.recipient_id = r.recipient_id
+                 WHERE br.tenant_id = $1`;
+    const values = [req.user.tenant_id];
 
     // Donors should only see requests that match their own blood group.
     if (req.user?.role === 'donor') {
       const donorResult = await pool.query(
-        'SELECT blood_group FROM donor WHERE user_id = $1',
-        [req.user.user_id]
+        'SELECT blood_group FROM donor WHERE user_id = $1 AND tenant_id = $2',
+        [req.user.user_id, req.user.tenant_id]
       );
 
       if (donorResult.rows.length === 0) {
@@ -191,9 +192,9 @@ const getRequestHistory = async (req, res) => {
               COALESCE(br.hospital_location, r.hospital) as hospital_location
        FROM blood_request br
        JOIN recipient r ON br.recipient_id = r.recipient_id
-       WHERE br.recipient_id = $1
-       ORDER BY br.request_date DESC`,
-      [recipient_id]
+       WHERE br.recipient_id = $1 AND br.tenant_id = $2
+        ORDER BY br.request_date DESC`,
+      [recipient_id, req.user.tenant_id]
     );
 
     res.json(result.rows);
@@ -216,9 +217,9 @@ const getRequestHistoryByUserId = async (req, res) => {
               COALESCE(br.hospital_location, r.hospital) as hospital_location
        FROM blood_request br
        JOIN recipient r ON br.recipient_id = r.recipient_id
-       WHERE r.user_id = $1
-       ORDER BY br.request_date DESC`,
-      [user_id]
+       WHERE r.user_id = $1 AND br.tenant_id = $2
+        ORDER BY br.request_date DESC`,
+      [user_id, req.user.tenant_id]
     );
 
     res.json(result.rows);

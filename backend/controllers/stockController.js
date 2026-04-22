@@ -4,7 +4,8 @@ const pool = require('../config/database');
 const getAllStock = async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT * FROM blood_stock ORDER BY blood_group'
+      'SELECT * FROM blood_stock WHERE tenant_id = $1 ORDER BY blood_group',
+      [req.user.tenant_id]
     );
 
     res.json(result.rows);
@@ -20,8 +21,8 @@ const getStockByBloodGroup = async (req, res) => {
     const { blood_group } = req.params;
 
     const result = await pool.query(
-      'SELECT * FROM blood_stock WHERE blood_group = $1',
-      [blood_group]
+      'SELECT * FROM blood_stock WHERE blood_group = $1 AND tenant_id = $2',
+      [blood_group, req.user.tenant_id]
     );
 
     if (result.rows.length === 0) {
@@ -42,15 +43,15 @@ const addStock = async (req, res) => {
 
     // Check if stock exists for this blood group
     const existingStock = await pool.query(
-      'SELECT * FROM blood_stock WHERE blood_group = $1',
-      [blood_group]
+      'SELECT * FROM blood_stock WHERE blood_group = $1 AND tenant_id = $2',
+      [blood_group, req.user.tenant_id]
     );
 
     if (existingStock.rows.length === 0) {
       // Create new stock entry
       const result = await pool.query(
-        'INSERT INTO blood_stock (blood_group, units_available, expiry_date) VALUES ($1, $2, $3) RETURNING *',
-        [blood_group, units, expiry_date]
+        'INSERT INTO blood_stock (tenant_id, site_id, blood_group, units_available, expiry_date) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+        [req.user.tenant_id, req.user.site_id, blood_group, units, expiry_date]
       );
       return res.status(201).json({
         message: 'Stock added successfully',
@@ -59,8 +60,8 @@ const addStock = async (req, res) => {
     } else {
       // Update existing stock
       const result = await pool.query(
-        'UPDATE blood_stock SET units_available = units_available + $1, expiry_date = $2 WHERE blood_group = $3 RETURNING *',
-        [units, expiry_date, blood_group]
+        'UPDATE blood_stock SET units_available = units_available + $1, expiry_date = $2 WHERE blood_group = $3 AND tenant_id = $4 RETURNING *',
+        [units, expiry_date, blood_group, req.user.tenant_id]
       );
       return res.json({
         message: 'Stock updated successfully',
@@ -79,8 +80,8 @@ const reduceStock = async (req, res) => {
     const { blood_group, units } = req.body;
 
     const result = await pool.query(
-      'UPDATE blood_stock SET units_available = units_available - $1 WHERE blood_group = $2 AND units_available >= $1 RETURNING *',
-      [units, blood_group]
+      'UPDATE blood_stock SET units_available = units_available - $1 WHERE blood_group = $2 AND tenant_id = $3 AND units_available >= $1 RETURNING *',
+      [units, blood_group, req.user.tenant_id]
     );
 
     if (result.rows.length === 0) {
@@ -105,9 +106,10 @@ const getExpiryWarnings = async (req, res) => {
     // Get stock expiring within 30 days
     const result = await pool.query(
       `SELECT * FROM blood_stock
-       WHERE expiry_date BETWEEN $1 AND CURRENT_DATE + INTERVAL '30 days'
+       WHERE tenant_id = $2
+         AND expiry_date BETWEEN $1 AND CURRENT_DATE + INTERVAL '30 days'
        ORDER BY expiry_date ASC`,
-      [today]
+      [today, req.user.tenant_id]
     );
 
     res.json({
@@ -126,8 +128,8 @@ const getLowStockAlerts = async (req, res) => {
     const threshold = 5; // units
 
     const result = await pool.query(
-      'SELECT * FROM blood_stock WHERE units_available < $1',
-      [threshold]
+      'SELECT * FROM blood_stock WHERE units_available < $1 AND tenant_id = $2',
+      [threshold, req.user.tenant_id]
     );
 
     res.json({
