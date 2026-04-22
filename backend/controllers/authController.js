@@ -57,10 +57,12 @@ const register = async (req, res) => {
     const tenantContext = await resolveTenantContext(client, tenant_code, site_code);
     if (!tenantContext) {
       await client.query('ROLLBACK');
+      transactionActive = false;
       return res.status(400).json({ error: 'Invalid tenant' });
     }
     if (tenantContext.error) {
       await client.query('ROLLBACK');
+      transactionActive = false;
       return res.status(400).json({ error: tenantContext.error });
     }
 
@@ -68,6 +70,7 @@ const register = async (req, res) => {
     const userExists = await client.query('SELECT * FROM "user" WHERE username = $1', [username]);
     if (userExists.rows.length > 0) {
       await client.query('ROLLBACK');
+      transactionActive = false;
       return res.status(400).json({ error: 'Username already exists' });
     }
 
@@ -101,8 +104,14 @@ const register = async (req, res) => {
 
     await client.query(
       `INSERT INTO user_membership (user_id, tenant_id, site_id, membership_role, is_primary)
-       VALUES ($1, $2, $3, $4, TRUE)
-       ON CONFLICT DO NOTHING`,
+       SELECT $1, $2, $3, $4, TRUE
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM user_membership
+         WHERE user_id = $1
+           AND tenant_id = $2
+           AND site_id IS NOT DISTINCT FROM $3
+       )`,
       [userId, tenantContext.tenantId, tenantContext.siteId, role]
     );
 

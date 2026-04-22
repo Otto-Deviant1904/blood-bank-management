@@ -17,7 +17,7 @@ const getSummary = async (req, res) => {
     const requestCount = await pool.query('SELECT COUNT(*) FROM blood_request WHERE tenant_id = $1', [req.user.tenant_id]);
     stats.total_requests = parseInt(requestCount.rows[0].count);
 
-    // Fulfilled requests
+    // Completed requests
     const fulfilledCount = await pool.query(
       "SELECT COUNT(*) FROM blood_request WHERE status = 'COMPLETED' AND tenant_id = $1",
       [req.user.tenant_id]
@@ -46,7 +46,7 @@ const getBloodUsage = async (req, res) => {
       `SELECT bs.blood_group, bs.units_available as current_stock,
               COALESCE(SUM(bi.units_issued), 0) as units_issued
        FROM blood_stock bs
-       LEFT JOIN blood_issue bi ON bs.blood_group = (SELECT blood_group FROM blood_stock WHERE stock_id = bi.stock_id AND tenant_id = $1)
+       LEFT JOIN blood_issue bi ON bs.stock_id = bi.stock_id AND bi.tenant_id = $1
        WHERE bs.tenant_id = $1
        GROUP BY bs.blood_group, bs.units_available
        ORDER BY bs.blood_group`,

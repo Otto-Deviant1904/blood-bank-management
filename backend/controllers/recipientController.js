@@ -46,9 +46,9 @@ const getRecipientProfileByUserId = async (req, res) => {
 // Create Blood Request
 const createBloodRequest = async (req, res) => {
   const client = await pool.connect();
+  let transactionActive = false;
   try {
     await ensureWorkflowSchema();
-    await client.query('BEGIN');
 
     const { recipient_id, units_requested, urgency_flag, blood_group_needed, hospital_location } = req.body;
 
@@ -57,17 +57,18 @@ const createBloodRequest = async (req, res) => {
       [req.user.user_id, req.user.tenant_id]
     );
     if (ownerCheck.rows.length === 0 || ownerCheck.rows[0].recipient_id !== Number(recipient_id)) {
-      await client.query('ROLLBACK');
       return res.status(403).json({ error: 'You can only create requests for your own profile' });
     }
 
     const registeredBloodGroup = ownerCheck.rows[0].blood_group_needed;
     if (blood_group_needed && blood_group_needed !== registeredBloodGroup) {
-      await client.query('ROLLBACK');
       return res.status(400).json({
         error: `You can only request your registered blood group (${registeredBloodGroup})`
       });
     }
+
+    await client.query('BEGIN');
+    transactionActive = true;
 
     const result = await client.query(
       `INSERT INTO blood_request
@@ -87,13 +88,16 @@ const createBloodRequest = async (req, res) => {
     );
 
     await client.query('COMMIT');
+    transactionActive = false;
 
     res.status(201).json({
       message: 'Blood request created successfully',
       request: result.rows[0]
     });
   } catch (error) {
-    await client.query('ROLLBACK');
+    if (transactionActive) {
+      await client.query('ROLLBACK');
+    }
     console.error(error);
     res.status(500).json({ error: 'Failed to create blood request' });
   } finally {

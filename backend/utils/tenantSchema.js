@@ -1,6 +1,28 @@
 const pool = require('../config/database');
 
+const ALLOWED_CONSTRAINTS = new Set([
+  'user|fk_user_primary_tenant|FOREIGN KEY (primary_tenant_id) REFERENCES organization(tenant_id) ON DELETE RESTRICT',
+  'user|fk_user_primary_site|FOREIGN KEY (primary_site_id) REFERENCES site(site_id) ON DELETE SET NULL',
+  'donor|fk_donor_tenant|FOREIGN KEY (tenant_id) REFERENCES organization(tenant_id) ON DELETE RESTRICT',
+  'donor|fk_donor_site|FOREIGN KEY (site_id) REFERENCES site(site_id) ON DELETE SET NULL',
+  'recipient|fk_recipient_tenant|FOREIGN KEY (tenant_id) REFERENCES organization(tenant_id) ON DELETE RESTRICT',
+  'recipient|fk_recipient_site|FOREIGN KEY (site_id) REFERENCES site(site_id) ON DELETE SET NULL',
+  'blood_request|fk_blood_request_tenant|FOREIGN KEY (tenant_id) REFERENCES organization(tenant_id) ON DELETE RESTRICT',
+  'blood_request|fk_blood_request_site|FOREIGN KEY (site_id) REFERENCES site(site_id) ON DELETE SET NULL',
+  'blood_stock|fk_blood_stock_tenant|FOREIGN KEY (tenant_id) REFERENCES organization(tenant_id) ON DELETE RESTRICT',
+  'blood_stock|fk_blood_stock_site|FOREIGN KEY (site_id) REFERENCES site(site_id) ON DELETE SET NULL',
+  'approval|fk_approval_tenant|FOREIGN KEY (tenant_id) REFERENCES organization(tenant_id) ON DELETE RESTRICT',
+  'blood_issue|fk_blood_issue_tenant|FOREIGN KEY (tenant_id) REFERENCES organization(tenant_id) ON DELETE RESTRICT',
+  'donation_application|fk_donation_application_tenant|FOREIGN KEY (tenant_id) REFERENCES organization(tenant_id) ON DELETE RESTRICT'
+]);
+
 const addConstraintIfMissing = async (tableName, constraintName, constraintSql) => {
+  const allowKey = `${tableName}|${constraintName}|${constraintSql}`;
+  if (!ALLOWED_CONSTRAINTS.has(allowKey)) {
+    throw new Error(`Constraint declaration not allowed: ${tableName}.${constraintName}`);
+  }
+
+  const resolvedTableName = tableName === 'user' ? '"user"' : tableName;
   const { rows } = await pool.query(
     `
       SELECT 1
@@ -9,11 +31,11 @@ const addConstraintIfMissing = async (tableName, constraintName, constraintSql) 
         AND conrelid = $2::regclass
       LIMIT 1
     `,
-    [constraintName, tableName]
+    [constraintName, resolvedTableName]
   );
 
   if (rows.length === 0) {
-    await pool.query(`ALTER TABLE ${tableName} ADD CONSTRAINT ${constraintName} ${constraintSql}`);
+    await pool.query(`ALTER TABLE ${resolvedTableName} ADD CONSTRAINT ${constraintName} ${constraintSql}`);
   }
 };
 
@@ -201,12 +223,12 @@ const ensureTenantSchema = async () => {
   `);
 
   await addConstraintIfMissing(
-    '"user"',
+    'user',
     'fk_user_primary_tenant',
     'FOREIGN KEY (primary_tenant_id) REFERENCES organization(tenant_id) ON DELETE RESTRICT'
   );
   await addConstraintIfMissing(
-    '"user"',
+    'user',
     'fk_user_primary_site',
     'FOREIGN KEY (primary_site_id) REFERENCES site(site_id) ON DELETE SET NULL'
   );
@@ -303,15 +325,19 @@ const ensureTenantSchema = async () => {
     )
   `);
 
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_donor_tenant ON donor(tenant_id);
-    CREATE INDEX IF NOT EXISTS idx_recipient_tenant ON recipient(tenant_id);
-    CREATE INDEX IF NOT EXISTS idx_blood_request_tenant_status ON blood_request(tenant_id, status);
-    CREATE INDEX IF NOT EXISTS idx_blood_stock_tenant_group ON blood_stock(tenant_id, blood_group);
-    CREATE INDEX IF NOT EXISTS idx_approval_tenant ON approval(tenant_id);
-    CREATE INDEX IF NOT EXISTS idx_blood_issue_tenant ON blood_issue(tenant_id);
-    CREATE INDEX IF NOT EXISTS idx_donation_application_tenant ON donation_application(tenant_id)
-  `);
+  const tenantIndexes = [
+    'CREATE INDEX IF NOT EXISTS idx_donor_tenant ON donor(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_recipient_tenant ON recipient(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_blood_request_tenant_status ON blood_request(tenant_id, status)',
+    'CREATE INDEX IF NOT EXISTS idx_blood_stock_tenant_group ON blood_stock(tenant_id, blood_group)',
+    'CREATE INDEX IF NOT EXISTS idx_approval_tenant ON approval(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_blood_issue_tenant ON blood_issue(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_donation_application_tenant ON donation_application(tenant_id)'
+  ];
+
+  for (const statement of tenantIndexes) {
+    await pool.query(statement);
+  }
 };
 
 module.exports = { ensureTenantSchema };
