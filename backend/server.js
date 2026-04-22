@@ -4,6 +4,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const { ensureBaseSchema } = require('./utils/baseSchema');
 const { ensureWorkflowSchema } = require('./utils/workflow');
+const { ensureTenantSchema } = require('./utils/tenantSchema');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -27,6 +28,9 @@ const initializeDatabase = async () => {
 
   // Workflow migration is safe to run repeatedly.
   await ensureWorkflowSchema();
+
+  // Tenant foundation migration can be applied repeatedly.
+  await ensureTenantSchema();
 };
 
 // Middleware
