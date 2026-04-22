@@ -68,8 +68,8 @@ const authenticateToken = async (req, res, next) => {
     };
 
     req.dbClient = client;
-    res.on('finish', releaseClient);
-    res.on('close', releaseClient);
+    res.once('finish', releaseClient);
+    res.once('close', releaseClient);
 
     runWithDbContext(
       {

@@ -13,6 +13,10 @@ const writeAuditLog = async (
     return;
   }
 
+  if (req?.user?.tenant_id && tenantId && Number(req.user.tenant_id) !== Number(tenantId)) {
+    throw new Error('Audit tenant mismatch with authenticated request context');
+  }
+
   const context = getDbContext();
   if (context?.client) {
     await context.client.query(

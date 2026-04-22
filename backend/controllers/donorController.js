@@ -2,6 +2,8 @@ const pool = require('../config/database');
 const { REQUEST_STATUSES, ensureWorkflowSchema } = require('../utils/workflow');
 const { writeAuditLog } = require('../utils/audit');
 
+const DEFAULT_BLOOD_EXPIRY_DAYS = 35;
+
 // Register Donor (handled in auth controller)
 // Get Donor Profile
 const getDonorProfile = async (req, res) => {
@@ -136,10 +138,17 @@ const recordDonation = async (req, res) => {
 
     // Add units to blood stock
     const bloodGroup = updateResult.rows[0].blood_group;
-    await pool.query(
+    const stockUpdateResult = await pool.query(
       'UPDATE blood_stock SET units_available = units_available + $1 WHERE blood_group = $2 AND tenant_id = $3',
       [units_donated, bloodGroup, req.user.tenant_id]
     );
+
+    if (stockUpdateResult.rowCount === 0) {
+      await pool.query(
+        'INSERT INTO blood_stock (tenant_id, site_id, blood_group, units_available, expiry_date) VALUES ($1, $2, $3, $4, CURRENT_DATE + $5 * INTERVAL \'1 day\')',
+        [req.user.tenant_id, req.user.site_id || null, bloodGroup, units_donated, DEFAULT_BLOOD_EXPIRY_DAYS]
+      );
+    }
 
     await writeAuditLog(req, {
       action: 'DONATION_RECORDED',

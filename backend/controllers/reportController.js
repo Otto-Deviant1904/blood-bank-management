@@ -1,4 +1,6 @@
 const pool = require('../config/database');
+const DEFAULT_AUDIT_LIMIT = 100;
+const MAX_AUDIT_LIMIT = 500;
 
 // Get System Summary Statistics
 const getSummary = async (req, res) => {
@@ -188,7 +190,10 @@ const getAuditLogs = async (req, res) => {
       values.push(to_date);
     }
 
-    const cappedLimit = Math.min(Number(limit) || 100, 500);
+    const parsedLimit = Number.parseInt(limit, 10);
+    const cappedLimit = Number.isNaN(parsedLimit) || parsedLimit <= 0
+      ? DEFAULT_AUDIT_LIMIT
+      : Math.min(parsedLimit, MAX_AUDIT_LIMIT);
     query += ` ORDER BY created_at DESC LIMIT $${values.length + 1}`;
     values.push(cappedLimit);
 
