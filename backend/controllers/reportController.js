@@ -18,11 +18,11 @@ const getSummary = async (req, res) => {
     stats.total_requests = parseInt(requestCount.rows[0].count);
 
     // Completed requests
-    const fulfilledCount = await pool.query(
+    const completedCount = await pool.query(
       "SELECT COUNT(*) FROM blood_request WHERE status = 'COMPLETED' AND tenant_id = $1",
       [req.user.tenant_id]
     );
-    stats.fulfilled_requests = parseInt(fulfilledCount.rows[0].count);
+    stats.fulfilled_requests = parseInt(completedCount.rows[0].count);
 
     // Total units issued
     const unitsIssued = await pool.query('SELECT SUM(units_issued) FROM blood_issue WHERE tenant_id = $1', [req.user.tenant_id]);
@@ -43,13 +43,13 @@ const getSummary = async (req, res) => {
 const getBloodUsage = async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT bs.blood_group, bs.units_available as current_stock,
-              COALESCE(SUM(bi.units_issued), 0) as units_issued
-       FROM blood_stock bs
-       LEFT JOIN blood_issue bi ON bs.stock_id = bi.stock_id AND bi.tenant_id = $1
-       WHERE bs.tenant_id = $1
-       GROUP BY bs.blood_group, bs.units_available
-       ORDER BY bs.blood_group`,
+       `SELECT bs.blood_group, bs.units_available as current_stock,
+               COALESCE(SUM(bi.units_issued), 0) as units_issued
+        FROM blood_stock bs
+        LEFT JOIN blood_issue bi ON bs.stock_id = bi.stock_id AND bi.tenant_id = $1
+        WHERE bs.tenant_id = $1
+        GROUP BY bs.blood_group, bs.units_available
+        ORDER BY bs.blood_group`,
       [req.user.tenant_id]
     );
 
@@ -159,11 +159,53 @@ const getRequestStatusDistribution = async (req, res) => {
   }
 };
 
+const getAuditLogs = async (req, res) => {
+  try {
+    const { action, entity_type, from_date, to_date, limit } = req.query;
+
+    let query = `SELECT audit_id, tenant_id, site_id, actor_user_id, action, entity_type, entity_id, details, created_at
+                 FROM audit_log
+                 WHERE tenant_id = $1`;
+    const values = [req.user.tenant_id];
+
+    if (action) {
+      query += ` AND action = $${values.length + 1}`;
+      values.push(action);
+    }
+
+    if (entity_type) {
+      query += ` AND entity_type = $${values.length + 1}`;
+      values.push(entity_type);
+    }
+
+    if (from_date) {
+      query += ` AND created_at >= $${values.length + 1}`;
+      values.push(from_date);
+    }
+
+    if (to_date) {
+      query += ` AND created_at <= $${values.length + 1}`;
+      values.push(to_date);
+    }
+
+    const cappedLimit = Math.min(Number(limit) || 100, 500);
+    query += ` ORDER BY created_at DESC LIMIT $${values.length + 1}`;
+    values.push(cappedLimit);
+
+    const result = await pool.query(query, values);
+    res.json(result.rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to fetch audit logs' });
+  }
+};
+
 module.exports = {
   getSummary,
   getBloodUsage,
   getDonorStats,
   getRecipientStats,
   getFilteredReports,
-  getRequestStatusDistribution
+  getRequestStatusDistribution,
+  getAuditLogs
 };

@@ -1,4 +1,5 @@
 const pool = require('../config/database');
+const { writeAuditLog } = require('../utils/audit');
 
 // Get All Blood Stock
 const getAllStock = async (req, res) => {
@@ -53,6 +54,13 @@ const addStock = async (req, res) => {
         'INSERT INTO blood_stock (tenant_id, site_id, blood_group, units_available, expiry_date) VALUES ($1, $2, $3, $4, $5) RETURNING *',
         [req.user.tenant_id, req.user.site_id, blood_group, units, expiry_date]
       );
+
+      await writeAuditLog(req, {
+        action: 'STOCK_ADDED',
+        entityType: 'blood_stock',
+        entityId: result.rows[0].stock_id,
+        details: { blood_group, units, expiry_date }
+      });
       return res.status(201).json({
         message: 'Stock added successfully',
         stock: result.rows[0]
@@ -63,6 +71,13 @@ const addStock = async (req, res) => {
         'UPDATE blood_stock SET units_available = units_available + $1, expiry_date = $2 WHERE blood_group = $3 AND tenant_id = $4 RETURNING *',
         [units, expiry_date, blood_group, req.user.tenant_id]
       );
+
+      await writeAuditLog(req, {
+        action: 'STOCK_UPDATED',
+        entityType: 'blood_stock',
+        entityId: result.rows[0].stock_id,
+        details: { blood_group, units_delta: units, expiry_date }
+      });
       return res.json({
         message: 'Stock updated successfully',
         stock: result.rows[0]
@@ -87,6 +102,13 @@ const reduceStock = async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(400).json({ error: 'Insufficient stock or blood group not found' });
     }
+
+    await writeAuditLog(req, {
+      action: 'STOCK_REDUCED',
+      entityType: 'blood_stock',
+      entityId: result.rows[0].stock_id,
+      details: { blood_group, units }
+    });
 
     res.json({
       message: 'Stock reduced successfully',

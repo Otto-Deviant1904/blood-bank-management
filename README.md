@@ -183,6 +183,7 @@ If you prefer traditional setup without Docker:
 - `GET /api/reports/recipient-stats` - Get recipient stats (admin only)
 - `GET /api/reports/filtered` - Get filtered reports (admin only)
 - `GET /api/reports/status-distribution` - Get request status distribution (admin only)
+- `GET /api/reports/audit-logs` - Get tenant audit logs (admin only)
 
 ## Usage Workflows
 
@@ -313,3 +314,9 @@ For BITS DBMS Course - 2024-2025
 
 **Last Updated**: April 2026
 **Status**: Complete and Ready for Testing
+## Security Hardening Notes
+
+- Tenant-aware authorization context is enforced per request and propagated to PostgreSQL session settings (`app.current_tenant`, `app.current_user_id`, `app.current_role`).
+- Tenant-owned tables use PostgreSQL Row Level Security policies for defense-in-depth.
+- Critical mutations are captured in immutable `audit_log` entries.
+- API rate limits are enabled globally and stricter on authentication endpoints.

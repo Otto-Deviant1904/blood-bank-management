@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
+const { runWithDbContext } = require('../utils/dbContext');
 
 const authenticateToken = async (req, res, next) => {
   const token = req.headers['authorization']?.split(' ')[1];
@@ -27,7 +28,24 @@ const authenticateToken = async (req, res, next) => {
       siteId = userResult.rows[0].primary_site_id;
     }
 
-    const membershipResult = await pool.query(
+    const client = await pool.connect();
+    let released = false;
+    const releaseClient = () => {
+      if (!released) {
+        released = true;
+        client.release();
+      }
+    };
+
+    await client.query(
+      `SELECT
+         set_config('app.current_tenant', $1, false),
+         set_config('app.current_user_id', $2, false),
+         set_config('app.current_role', $3, false)`,
+      [String(tenantId), String(decoded.user_id), String(decoded.role || '')]
+    );
+
+    const membershipResult = await client.query(
       `SELECT membership_role, site_id
        FROM user_membership
        WHERE user_id = $1 AND tenant_id = $2
@@ -37,6 +55,7 @@ const authenticateToken = async (req, res, next) => {
     );
 
     if (membershipResult.rows.length === 0) {
+      releaseClient();
       return res.status(403).json({ error: 'No active membership for this tenant' });
     }
 
@@ -48,8 +67,24 @@ const authenticateToken = async (req, res, next) => {
       role: membership.membership_role
     };
 
-    next();
+    req.dbClient = client;
+    res.on('finish', releaseClient);
+    res.on('close', releaseClient);
+
+    runWithDbContext(
+      {
+        client,
+        tenantId: req.user.tenant_id,
+        userId: req.user.user_id,
+        role: req.user.role
+      },
+      () => next()
+    );
   } catch (err) {
+    if (req.dbClient) {
+      req.dbClient.release();
+      req.dbClient = null;
+    }
     return res.status(403).json({ error: 'Invalid or expired token' });
   }
 };

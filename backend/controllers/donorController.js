@@ -1,5 +1,6 @@
 const pool = require('../config/database');
 const { REQUEST_STATUSES, ensureWorkflowSchema } = require('../utils/workflow');
+const { writeAuditLog } = require('../utils/audit');
 
 // Register Donor (handled in auth controller)
 // Get Donor Profile
@@ -58,6 +59,13 @@ const updateDonorProfile = async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Donor not found' });
     }
+
+    await writeAuditLog(req, {
+      action: 'DONOR_PROFILE_UPDATED',
+      entityType: 'donor',
+      entityId: id,
+      details: { fields: ['name', 'age', 'blood_group', 'phone', 'email', 'city'] }
+    });
 
     res.json({ message: 'Profile updated successfully', donor: result.rows[0] });
   } catch (error) {
@@ -132,6 +140,13 @@ const recordDonation = async (req, res) => {
       'UPDATE blood_stock SET units_available = units_available + $1 WHERE blood_group = $2 AND tenant_id = $3',
       [units_donated, bloodGroup, req.user.tenant_id]
     );
+
+    await writeAuditLog(req, {
+      action: 'DONATION_RECORDED',
+      entityType: 'donor',
+      entityId: donor_id,
+      details: { units_donated, blood_group: bloodGroup }
+    });
 
     res.json({
       message: 'Donation recorded successfully',

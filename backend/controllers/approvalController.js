@@ -1,5 +1,6 @@
 const pool = require('../config/database');
 const { REQUEST_STATUSES, ensureWorkflowSchema } = require('../utils/workflow');
+const { writeAuditLog } = require('../utils/audit');
 
 // Create Approval
 const createApproval = async (req, res) => {
@@ -43,6 +44,13 @@ const updateApprovalStatus = async (req, res) => {
       'UPDATE blood_request SET status = $1 WHERE request_id = $2 AND tenant_id = $3 RETURNING *',
       [finalStatus, id, req.user.tenant_id]
     );
+
+    await writeAuditLog(req, {
+      action: 'REQUEST_VERIFICATION_UPDATED',
+      entityType: 'blood_request',
+      entityId: id,
+      details: { status: finalStatus }
+    });
 
     res.json({
       message: 'Request verification updated successfully',
@@ -154,6 +162,13 @@ const issueBlood = async (req, res) => {
     }
 
     await client.query('COMMIT');
+
+    await writeAuditLog(req, {
+      action: 'REQUEST_COMPLETED',
+      entityType: 'blood_request',
+      entityId: blood_request_id,
+      details: { status: REQUEST_STATUSES.COMPLETED }
+    });
 
     res.status(201).json({
       message: 'Request marked as fulfilled',

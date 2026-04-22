@@ -39,6 +39,72 @@ const addConstraintIfMissing = async (tableName, constraintName, constraintSql) 
   }
 };
 
+const TENANT_RLS_TABLES = [
+  'donor',
+  'recipient',
+  'blood_request',
+  'blood_stock',
+  'approval',
+  'blood_issue',
+  'donation_application',
+  'user_membership',
+  'audit_log'
+];
+
+const ensureTenantRlsPolicies = async () => {
+  for (const tableName of TENANT_RLS_TABLES) {
+    await pool.query(`ALTER TABLE ${tableName} ENABLE ROW LEVEL SECURITY`);
+    await pool.query(`ALTER TABLE ${tableName} FORCE ROW LEVEL SECURITY`);
+    await pool.query(`DROP POLICY IF EXISTS ${tableName}_tenant_policy ON ${tableName}`);
+    await pool.query(`
+      CREATE POLICY ${tableName}_tenant_policy ON ${tableName}
+      USING (tenant_id = NULLIF(current_setting('app.current_tenant', true), '')::INT)
+      WITH CHECK (tenant_id = NULLIF(current_setting('app.current_tenant', true), '')::INT)
+    `);
+  }
+};
+
+const ensureAuditLogSchema = async () => {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS audit_log (
+      audit_id BIGSERIAL PRIMARY KEY,
+      tenant_id INT NOT NULL REFERENCES organization(tenant_id) ON DELETE RESTRICT,
+      site_id INT REFERENCES site(site_id) ON DELETE SET NULL,
+      actor_user_id INT REFERENCES "user"(user_id) ON DELETE SET NULL,
+      action VARCHAR(120) NOT NULL,
+      entity_type VARCHAR(120) NOT NULL,
+      entity_id VARCHAR(120),
+      details JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE OR REPLACE FUNCTION prevent_audit_log_mutation()
+    RETURNS trigger AS $$
+    BEGIN
+      RAISE EXCEPTION 'audit_log is append-only';
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+
+  await pool.query(`
+    DROP TRIGGER IF EXISTS trg_prevent_audit_log_update ON audit_log
+  `);
+
+  await pool.query(`
+    CREATE TRIGGER trg_prevent_audit_log_update
+    BEFORE UPDATE OR DELETE ON audit_log
+    FOR EACH ROW
+    EXECUTE FUNCTION prevent_audit_log_mutation()
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_audit_log_tenant_created
+    ON audit_log(tenant_id, created_at DESC)
+  `);
+};
+
 const ensureTenantSchema = async () => {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS organization (
@@ -300,6 +366,8 @@ const ensureTenantSchema = async () => {
     )
   `);
 
+  await ensureAuditLogSchema();
+
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_user_membership_user_tenant_site
     ON user_membership(user_id, tenant_id, site_id)
@@ -332,12 +400,15 @@ const ensureTenantSchema = async () => {
     'CREATE INDEX IF NOT EXISTS idx_blood_stock_tenant_group ON blood_stock(tenant_id, blood_group)',
     'CREATE INDEX IF NOT EXISTS idx_approval_tenant ON approval(tenant_id)',
     'CREATE INDEX IF NOT EXISTS idx_blood_issue_tenant ON blood_issue(tenant_id)',
-    'CREATE INDEX IF NOT EXISTS idx_donation_application_tenant ON donation_application(tenant_id)'
+    'CREATE INDEX IF NOT EXISTS idx_donation_application_tenant ON donation_application(tenant_id)',
+    'CREATE INDEX IF NOT EXISTS idx_user_membership_tenant ON user_membership(tenant_id)'
   ];
 
   for (const statement of tenantIndexes) {
     await pool.query(statement);
   }
+
+  await ensureTenantRlsPolicies();
 };
 
 module.exports = { ensureTenantSchema };

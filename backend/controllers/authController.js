@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
+const { writeAuditLog } = require('../utils/audit');
 
 const resolveTenantContext = async (client, tenantCode, siteCode) => {
   const organizationResult = await client.query(
@@ -66,6 +67,14 @@ const register = async (req, res) => {
       return res.status(400).json({ error: tenantContext.error });
     }
 
+    await client.query(
+      `SELECT
+         set_config('app.current_tenant', $1, false),
+         set_config('app.current_user_id', $2, false),
+         set_config('app.current_role', $3, false)`,
+      [String(tenantContext.tenantId), '0', String(role || '')]
+    );
+
     // Check if user already exists
     const userExists = await client.query('SELECT * FROM "user" WHERE username = $1', [username]);
     if (userExists.rows.length > 0) {
@@ -86,6 +95,11 @@ const register = async (req, res) => {
     );
 
     const userId = userResult.rows[0].user_id;
+
+    await client.query(
+      `SELECT set_config('app.current_user_id', $1, false)`,
+      [String(userId)]
+    );
 
     // Create profile based on role
     if (role === 'donor') {
@@ -132,6 +146,16 @@ const register = async (req, res) => {
       { expiresIn: jwtExpiry }
     );
 
+    await writeAuditLog(req, {
+      action: 'USER_REGISTERED',
+      entityType: 'user',
+      entityId: userId,
+      tenantId: tenantContext.tenantId,
+      siteId: tenantContext.siteId,
+      actorUserId: userId,
+      details: { role, username }
+    });
+
     res.status(201).json({
       message: 'User registered successfully',
       token,
@@ -176,10 +200,11 @@ const register = async (req, res) => {
 };
 
 const login = async (req, res) => {
+  const client = await pool.connect();
   try {
     const { username, password, tenant_code } = req.body;
 
-    const result = await pool.query(
+    const result = await client.query(
       'SELECT * FROM "user" WHERE username = $1',
       [username]
     );
@@ -200,7 +225,25 @@ const login = async (req, res) => {
     let membershipRole = user.role;
 
     if (tenant_code) {
-      const membershipResult = await pool.query(
+      const tenantLookup = await client.query(
+        'SELECT tenant_id FROM organization WHERE code = $1 AND is_active = TRUE LIMIT 1',
+        [tenant_code]
+      );
+
+      if (tenantLookup.rows.length === 0) {
+        return res.status(403).json({ error: 'No membership found for requested tenant' });
+      }
+
+      tenantId = tenantLookup.rows[0].tenant_id;
+      await client.query(
+        `SELECT
+           set_config('app.current_tenant', $1, false),
+           set_config('app.current_user_id', $2, false),
+           set_config('app.current_role', $3, false)`,
+        [String(tenantId), String(user.user_id), String(user.role || '')]
+      );
+
+      const membershipResult = await client.query(
         `SELECT um.tenant_id, um.site_id, um.membership_role
          FROM user_membership um
          JOIN organization o ON o.tenant_id = um.tenant_id
@@ -218,7 +261,15 @@ const login = async (req, res) => {
       siteId = membershipResult.rows[0].site_id;
       membershipRole = membershipResult.rows[0].membership_role;
     } else {
-      const membershipResult = await pool.query(
+      await client.query(
+        `SELECT
+           set_config('app.current_tenant', $1, false),
+           set_config('app.current_user_id', $2, false),
+           set_config('app.current_role', $3, false)`,
+        [String(tenantId), String(user.user_id), String(user.role || '')]
+      );
+
+      const membershipResult = await client.query(
         `SELECT membership_role, site_id
          FROM user_membership
          WHERE user_id = $1 AND tenant_id = $2
@@ -246,6 +297,16 @@ const login = async (req, res) => {
       { expiresIn: jwtExpiry }
     );
 
+    await writeAuditLog(req, {
+      action: 'USER_LOGGED_IN',
+      entityType: 'user',
+      entityId: user.user_id,
+      tenantId,
+      siteId,
+      actorUserId: user.user_id,
+      details: { username: user.username, role: membershipRole }
+    });
+
     res.json({
       message: 'Login successful',
       token,
@@ -260,6 +321,8 @@ const login = async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Login failed' });
+  } finally {
+    client.release();
   }
 };
 

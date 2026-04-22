@@ -1,5 +1,6 @@
 const pool = require('../config/database');
 const { REQUEST_STATUSES, ensureWorkflowSchema } = require('../utils/workflow');
+const { writeAuditLog } = require('../utils/audit');
 
 // Get Recipient Profile
 const getRecipientProfile = async (req, res) => {
@@ -89,6 +90,17 @@ const createBloodRequest = async (req, res) => {
 
     await client.query('COMMIT');
     transactionActive = false;
+
+    await writeAuditLog(req, {
+      action: 'BLOOD_REQUEST_CREATED',
+      entityType: 'blood_request',
+      entityId: result.rows[0].request_id,
+      details: {
+        recipient_id,
+        units_requested,
+        urgency_flag
+      }
+    });
 
     res.status(201).json({
       message: 'Blood request created successfully',

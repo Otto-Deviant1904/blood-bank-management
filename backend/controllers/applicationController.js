@@ -1,5 +1,6 @@
 const pool = require('../config/database');
 const { REQUEST_STATUSES, ensureWorkflowSchema } = require('../utils/workflow');
+const { writeAuditLog } = require('../utils/audit');
 
 const applyToRequest = async (req, res) => {
   const client = await pool.connect();
@@ -71,6 +72,13 @@ const applyToRequest = async (req, res) => {
     );
 
     await client.query('COMMIT');
+
+    await writeAuditLog(req, {
+      action: 'DONATION_APPLICATION_CREATED',
+      entityType: 'donation_application',
+      entityId: insertResult.rows[0].application_id,
+      details: { request_id }
+    });
 
     res.status(201).json({
       message: 'Application submitted successfully',
@@ -235,6 +243,13 @@ const updateApplicationStatus = async (req, res) => {
     }
 
     await client.query('COMMIT');
+
+    await writeAuditLog(req, {
+      action: 'DONATION_APPLICATION_STATUS_UPDATED',
+      entityType: 'donation_application',
+      entityId: id,
+      details: { status, request_id: appData.request_id }
+    });
 
     res.json({
       message: 'Application status updated successfully',
