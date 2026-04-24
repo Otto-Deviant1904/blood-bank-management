@@ -9,5 +9,6 @@ router.get('/donor-stats', authenticateToken, authorizeRole('admin'), reportCont
 router.get('/recipient-stats', authenticateToken, authorizeRole('admin'), reportController.getRecipientStats);
 router.get('/filtered', authenticateToken, authorizeRole('admin'), reportController.getFilteredReports);
 router.get('/status-distribution', authenticateToken, authorizeRole('admin'), reportController.getRequestStatusDistribution);
+router.get('/audit-logs', authenticateToken, authorizeRole('admin'), reportController.getAuditLogs);
 
 module.exports = router;

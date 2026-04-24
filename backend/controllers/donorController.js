@@ -1,5 +1,8 @@
 const pool = require('../config/database');
 const { REQUEST_STATUSES, ensureWorkflowSchema } = require('../utils/workflow');
+const { writeAuditLog } = require('../utils/audit');
+
+const DEFAULT_BLOOD_EXPIRY_DAYS = 35;
 
 // Register Donor (handled in auth controller)
 // Get Donor Profile
@@ -8,8 +11,8 @@ const getDonorProfile = async (req, res) => {
     const { id } = req.params;
 
     const result = await pool.query(
-      'SELECT * FROM donor WHERE donor_id = $1',
-      [id]
+      'SELECT * FROM donor WHERE donor_id = $1 AND tenant_id = $2',
+      [id, req.user.tenant_id]
     );
 
     if (result.rows.length === 0) {
@@ -29,8 +32,8 @@ const getDonorProfileByUserId = async (req, res) => {
     const { user_id } = req.params;
 
     const result = await pool.query(
-      'SELECT * FROM donor WHERE user_id = $1',
-      [user_id]
+      'SELECT * FROM donor WHERE user_id = $1 AND tenant_id = $2',
+      [user_id, req.user.tenant_id]
     );
 
     if (result.rows.length === 0) {
@@ -51,13 +54,20 @@ const updateDonorProfile = async (req, res) => {
     const { name, age, blood_group, phone, email, city } = req.body;
 
     const result = await pool.query(
-      'UPDATE donor SET name = $1, age = $2, blood_group = $3, phone = $4, email = $5, city = $6 WHERE donor_id = $7 RETURNING *',
-      [name, age, blood_group, phone, email, city, id]
+      'UPDATE donor SET name = $1, age = $2, blood_group = $3, phone = $4, email = $5, city = $6 WHERE donor_id = $7 AND tenant_id = $8 RETURNING *',
+      [name, age, blood_group, phone, email, city, id, req.user.tenant_id]
     );
 
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Donor not found' });
     }
+
+    await writeAuditLog(req, {
+      action: 'DONOR_PROFILE_UPDATED',
+      entityType: 'donor',
+      entityId: id,
+      details: { fields: ['name', 'age', 'blood_group', 'phone', 'email', 'city'] }
+    });
 
     res.json({ message: 'Profile updated successfully', donor: result.rows[0] });
   } catch (error) {
@@ -70,8 +80,8 @@ const updateDonorProfile = async (req, res) => {
 const searchDonors = async (req, res) => {
   try {
     const { blood_group, city } = req.query;
-    let query = 'SELECT * FROM donor WHERE 1=1';
-    const values = [];
+    let query = 'SELECT * FROM donor WHERE tenant_id = $1';
+    const values = [req.user.tenant_id];
 
     if (blood_group) {
       query += ' AND blood_group = $' + (values.length + 1);
@@ -99,8 +109,8 @@ const recordDonation = async (req, res) => {
 
     // Check donor eligibility (56 days since last donation)
     const donorResult = await pool.query(
-      'SELECT last_donation_date FROM donor WHERE donor_id = $1',
-      [donor_id]
+      'SELECT last_donation_date FROM donor WHERE donor_id = $1 AND tenant_id = $2',
+      [donor_id, req.user.tenant_id]
     );
 
     if (donorResult.rows.length === 0) {
@@ -122,16 +132,30 @@ const recordDonation = async (req, res) => {
 
     // Update last donation date
     const updateResult = await pool.query(
-      'UPDATE donor SET last_donation_date = CURRENT_DATE WHERE donor_id = $1 RETURNING *',
-      [donor_id]
+      'UPDATE donor SET last_donation_date = CURRENT_DATE WHERE donor_id = $1 AND tenant_id = $2 RETURNING *',
+      [donor_id, req.user.tenant_id]
     );
 
     // Add units to blood stock
     const bloodGroup = updateResult.rows[0].blood_group;
-    await pool.query(
-      'UPDATE blood_stock SET units_available = units_available + $1 WHERE blood_group = $2',
-      [units_donated, bloodGroup]
+    const stockUpdateResult = await pool.query(
+      'UPDATE blood_stock SET units_available = units_available + $1 WHERE blood_group = $2 AND tenant_id = $3',
+      [units_donated, bloodGroup, req.user.tenant_id]
     );
+
+    if (stockUpdateResult.rowCount === 0) {
+      await pool.query(
+        'INSERT INTO blood_stock (tenant_id, site_id, blood_group, units_available, expiry_date) VALUES ($1, $2, $3, $4, CURRENT_DATE + $5 * INTERVAL \'1 day\')',
+        [req.user.tenant_id, req.user.site_id || null, bloodGroup, units_donated, DEFAULT_BLOOD_EXPIRY_DAYS]
+      );
+    }
+
+    await writeAuditLog(req, {
+      action: 'DONATION_RECORDED',
+      entityType: 'donor',
+      entityId: donor_id,
+      details: { units_donated, blood_group: bloodGroup }
+    });
 
     res.json({
       message: 'Donation recorded successfully',
@@ -151,8 +175,8 @@ const getDonationHistory = async (req, res) => {
     const { id } = req.params;
 
     const donorResult = await pool.query(
-      'SELECT donor_id, last_donation_date FROM donor WHERE donor_id = $1',
-      [id]
+      'SELECT donor_id, last_donation_date FROM donor WHERE donor_id = $1 AND tenant_id = $2',
+      [id, req.user.tenant_id]
     );
 
     if (donorResult.rows.length === 0) {
@@ -171,11 +195,12 @@ const getDonationHistory = async (req, res) => {
        FROM donation_application da
        JOIN blood_request br ON da.request_id = br.request_id
        JOIN recipient r ON br.recipient_id = r.recipient_id
-       WHERE da.donor_id = $1
-         AND da.status = 'Accepted'
-         AND br.status = $2
-       ORDER BY br.request_date DESC, da.updated_at DESC`,
-      [id, REQUEST_STATUSES.COMPLETED]
+        WHERE da.donor_id = $1
+          AND da.status = 'Accepted'
+          AND br.status = $2
+          AND br.tenant_id = $3
+        ORDER BY br.request_date DESC, da.updated_at DESC`,
+      [id, REQUEST_STATUSES.COMPLETED, req.user.tenant_id]
     );
 
     res.json({
@@ -198,8 +223,8 @@ const getDonationHistoryByUserId = async (req, res) => {
     const { user_id } = req.params;
 
     const donorResult = await pool.query(
-      'SELECT donor_id, last_donation_date FROM donor WHERE user_id = $1',
-      [user_id]
+      'SELECT donor_id, last_donation_date FROM donor WHERE user_id = $1 AND tenant_id = $2',
+      [user_id, req.user.tenant_id]
     );
 
     if (donorResult.rows.length === 0) {
@@ -220,11 +245,12 @@ const getDonationHistoryByUserId = async (req, res) => {
        FROM donation_application da
        JOIN blood_request br ON da.request_id = br.request_id
        JOIN recipient r ON br.recipient_id = r.recipient_id
-       WHERE da.donor_id = $1
-         AND da.status = 'Accepted'
-         AND br.status = $2
-       ORDER BY br.request_date DESC, da.updated_at DESC`,
-      [donorId, REQUEST_STATUSES.COMPLETED]
+        WHERE da.donor_id = $1
+          AND da.status = 'Accepted'
+          AND br.status = $2
+          AND br.tenant_id = $3
+        ORDER BY br.request_date DESC, da.updated_at DESC`,
+      [donorId, REQUEST_STATUSES.COMPLETED, req.user.tenant_id]
     );
 
     res.json({

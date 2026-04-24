@@ -1,5 +1,6 @@
 const pool = require('../config/database');
 const { REQUEST_STATUSES, ensureWorkflowSchema } = require('../utils/workflow');
+const { writeAuditLog } = require('../utils/audit');
 
 const applyToRequest = async (req, res) => {
   const client = await pool.connect();
@@ -11,8 +12,8 @@ const applyToRequest = async (req, res) => {
     await client.query('BEGIN');
 
     const donorResult = await client.query(
-      'SELECT donor_id, blood_group, last_donation_date FROM donor WHERE user_id = $1',
-      [req.user.user_id]
+      'SELECT donor_id, blood_group, last_donation_date FROM donor WHERE user_id = $1 AND tenant_id = $2',
+      [req.user.user_id, req.user.tenant_id]
     );
     if (donorResult.rows.length === 0) {
       await client.query('ROLLBACK');
@@ -36,9 +37,9 @@ const applyToRequest = async (req, res) => {
     const requestResult = await client.query(
       `SELECT br.request_id, br.status, COALESCE(br.blood_group_needed, r.blood_group_needed) AS blood_group_needed
        FROM blood_request br
-       JOIN recipient r ON br.recipient_id = r.recipient_id
-       WHERE br.request_id = $1`,
-      [request_id]
+        JOIN recipient r ON br.recipient_id = r.recipient_id
+       WHERE br.request_id = $1 AND br.tenant_id = $2`,
+      [request_id, req.user.tenant_id]
     );
 
     if (requestResult.rows.length === 0) {
@@ -59,18 +60,25 @@ const applyToRequest = async (req, res) => {
     }
 
     const insertResult = await client.query(
-      `INSERT INTO donation_application (request_id, donor_id, message)
-       VALUES ($1, $2, $3)
+      `INSERT INTO donation_application (request_id, donor_id, tenant_id, message)
+       VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [request_id, donor.donor_id, message || null]
+      [request_id, donor.donor_id, req.user.tenant_id, message || null]
     );
 
     await client.query(
-      'UPDATE blood_request SET status = $1 WHERE request_id = $2',
-      [REQUEST_STATUSES.DONOR_APPLIED, request_id]
+      'UPDATE blood_request SET status = $1 WHERE request_id = $2 AND tenant_id = $3',
+      [REQUEST_STATUSES.DONOR_APPLIED, request_id, req.user.tenant_id]
     );
 
     await client.query('COMMIT');
+
+    await writeAuditLog(req, {
+      action: 'DONATION_APPLICATION_CREATED',
+      entityType: 'donation_application',
+      entityId: insertResult.rows[0].application_id,
+      details: { request_id }
+    });
 
     res.status(201).json({
       message: 'Application submitted successfully',
@@ -92,7 +100,10 @@ const getMyApplications = async (req, res) => {
   try {
     await ensureWorkflowSchema();
 
-    const donorResult = await pool.query('SELECT donor_id FROM donor WHERE user_id = $1', [req.user.user_id]);
+    const donorResult = await pool.query(
+      'SELECT donor_id FROM donor WHERE user_id = $1 AND tenant_id = $2',
+      [req.user.user_id, req.user.tenant_id]
+    );
     if (donorResult.rows.length === 0) {
       return res.status(404).json({ error: 'Donor profile not found' });
     }
@@ -105,9 +116,9 @@ const getMyApplications = async (req, res) => {
        FROM donation_application da
        JOIN blood_request br ON da.request_id = br.request_id
        JOIN recipient r ON br.recipient_id = r.recipient_id
-       WHERE da.donor_id = $1
-       ORDER BY da.applied_at DESC`,
-      [donor_id]
+       WHERE da.donor_id = $1 AND da.tenant_id = $2
+        ORDER BY da.applied_at DESC`,
+      [donor_id, req.user.tenant_id]
     );
 
     res.json(result.rows);
@@ -123,7 +134,10 @@ const getApplicationsForRequest = async (req, res) => {
 
     const { request_id } = req.params;
 
-    const requestResult = await pool.query('SELECT recipient_id FROM blood_request WHERE request_id = $1', [request_id]);
+    const requestResult = await pool.query(
+      'SELECT recipient_id FROM blood_request WHERE request_id = $1 AND tenant_id = $2',
+      [request_id, req.user.tenant_id]
+    );
     if (requestResult.rows.length === 0) {
       return res.status(404).json({ error: 'Blood request not found' });
     }
@@ -131,7 +145,10 @@ const getApplicationsForRequest = async (req, res) => {
     const { recipient_id } = requestResult.rows[0];
 
     if (req.user.role === 'recipient') {
-      const recipientResult = await pool.query('SELECT recipient_id FROM recipient WHERE user_id = $1', [req.user.user_id]);
+      const recipientResult = await pool.query(
+        'SELECT recipient_id FROM recipient WHERE user_id = $1 AND tenant_id = $2',
+        [req.user.user_id, req.user.tenant_id]
+      );
       if (recipientResult.rows.length === 0 || recipientResult.rows[0].recipient_id !== recipient_id) {
         return res.status(403).json({ error: 'Not authorized to view applications for this request' });
       }
@@ -141,9 +158,9 @@ const getApplicationsForRequest = async (req, res) => {
       `SELECT da.*, d.name AS donor_name, d.age, d.blood_group, d.phone, d.email, d.city, d.last_donation_date
        FROM donation_application da
        JOIN donor d ON da.donor_id = d.donor_id
-       WHERE da.request_id = $1
-       ORDER BY da.applied_at DESC`,
-      [request_id]
+       WHERE da.request_id = $1 AND da.tenant_id = $2
+        ORDER BY da.applied_at DESC`,
+      [request_id, req.user.tenant_id]
     );
 
     res.json(result.rows);
@@ -170,9 +187,9 @@ const updateApplicationStatus = async (req, res) => {
     const appResult = await client.query(
       `SELECT da.application_id, da.request_id, da.donor_id, br.recipient_id
        FROM donation_application da
-       JOIN blood_request br ON da.request_id = br.request_id
-       WHERE da.application_id = $1`,
-      [id]
+        JOIN blood_request br ON da.request_id = br.request_id
+       WHERE da.application_id = $1 AND br.tenant_id = $2`,
+      [id, req.user.tenant_id]
     );
 
     if (appResult.rows.length === 0) {
@@ -183,8 +200,8 @@ const updateApplicationStatus = async (req, res) => {
     const appData = appResult.rows[0];
 
     const donorEligibilityResult = await client.query(
-      'SELECT last_donation_date FROM donor WHERE donor_id = $1',
-      [appData.donor_id]
+      'SELECT last_donation_date FROM donor WHERE donor_id = $1 AND tenant_id = $2',
+      [appData.donor_id, req.user.tenant_id]
     );
 
     if (status === 'Accepted' && donorEligibilityResult.rows[0]?.last_donation_date) {
@@ -199,33 +216,40 @@ const updateApplicationStatus = async (req, res) => {
     }
 
     const result = await client.query(
-      `UPDATE donation_application
-       SET status = $1, updated_at = CURRENT_TIMESTAMP
-       WHERE application_id = $2
-       RETURNING *`,
-      [status, id]
+       `UPDATE donation_application
+        SET status = $1, updated_at = CURRENT_TIMESTAMP
+        WHERE application_id = $2 AND tenant_id = $3
+        RETURNING *`,
+      [status, id, req.user.tenant_id]
     );
 
     if (status === 'Accepted') {
       await client.query(
-        'UPDATE blood_request SET status = $1 WHERE request_id = $2',
-        [REQUEST_STATUSES.MATCH_APPROVED, appData.request_id]
+        'UPDATE blood_request SET status = $1 WHERE request_id = $2 AND tenant_id = $3',
+        [REQUEST_STATUSES.MATCH_APPROVED, appData.request_id, req.user.tenant_id]
       );
 
       await client.query(
-        `UPDATE donation_application
-         SET status = 'Rejected', updated_at = CURRENT_TIMESTAMP
-         WHERE request_id = $1 AND application_id != $2 AND status = 'Pending'`,
-        [appData.request_id, id]
-      );
+         `UPDATE donation_application
+          SET status = 'Rejected', updated_at = CURRENT_TIMESTAMP
+          WHERE request_id = $1 AND application_id != $2 AND status = 'Pending' AND tenant_id = $3`,
+         [appData.request_id, id, req.user.tenant_id]
+       );
     } else {
       await client.query(
-        'UPDATE blood_request SET status = $1 WHERE request_id = $2',
-        [REQUEST_STATUSES.OPEN_FOR_DONORS, appData.request_id]
+        'UPDATE blood_request SET status = $1 WHERE request_id = $2 AND tenant_id = $3',
+        [REQUEST_STATUSES.OPEN_FOR_DONORS, appData.request_id, req.user.tenant_id]
       );
     }
 
     await client.query('COMMIT');
+
+    await writeAuditLog(req, {
+      action: 'DONATION_APPLICATION_STATUS_UPDATED',
+      entityType: 'donation_application',
+      entityId: id,
+      details: { status, request_id: appData.request_id }
+    });
 
     res.json({
       message: 'Application status updated successfully',
