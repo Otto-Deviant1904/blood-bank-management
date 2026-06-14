@@ -1,6 +1,7 @@
 const pool = require('../config/database');
-const { REQUEST_STATUSES, ensureWorkflowSchema } = require('../utils/workflow');
+const { REQUEST_STATUSES } = require('../utils/workflow');
 const { writeAuditLog } = require('../utils/audit');
+const logger = require('../utils/logger');
 
 const DEFAULT_BLOOD_EXPIRY_DAYS = 35;
 
@@ -21,7 +22,7 @@ const getDonorProfile = async (req, res) => {
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch donor profile', error);
     res.status(500).json({ error: 'Failed to fetch donor profile' });
   }
 };
@@ -42,7 +43,7 @@ const getDonorProfileByUserId = async (req, res) => {
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch donor profile by user', error);
     res.status(500).json({ error: 'Failed to fetch donor profile' });
   }
 };
@@ -71,7 +72,7 @@ const updateDonorProfile = async (req, res) => {
 
     res.json({ message: 'Profile updated successfully', donor: result.rows[0] });
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to update donor profile', error);
     res.status(500).json({ error: 'Failed to update profile' });
   }
 };
@@ -96,7 +97,7 @@ const searchDonors = async (req, res) => {
     const result = await pool.query(query, values);
     res.json(result.rows);
   } catch (error) {
-    console.error(error);
+    logger.error('Donor search failed', error);
     res.status(500).json({ error: 'Search failed' });
   }
 };
@@ -106,6 +107,11 @@ const recordDonation = async (req, res) => {
   try {
     const { donor_id } = req.params;
     const { units_donated } = req.body;
+
+    const parsedUnits = parseInt(units_donated, 10);
+    if (!parsedUnits || parsedUnits < 1) {
+      return res.status(400).json({ error: 'units_donated must be a positive integer' });
+    }
 
     // Check donor eligibility (56 days since last donation)
     const donorResult = await pool.query(
@@ -140,13 +146,13 @@ const recordDonation = async (req, res) => {
     const bloodGroup = updateResult.rows[0].blood_group;
     const stockUpdateResult = await pool.query(
       'UPDATE blood_stock SET units_available = units_available + $1 WHERE blood_group = $2 AND tenant_id = $3',
-      [units_donated, bloodGroup, req.user.tenant_id]
+      [parsedUnits, bloodGroup, req.user.tenant_id]
     );
 
     if (stockUpdateResult.rowCount === 0) {
       await pool.query(
         'INSERT INTO blood_stock (tenant_id, site_id, blood_group, units_available, expiry_date) VALUES ($1, $2, $3, $4, CURRENT_DATE + $5 * INTERVAL \'1 day\')',
-        [req.user.tenant_id, req.user.site_id || null, bloodGroup, units_donated, DEFAULT_BLOOD_EXPIRY_DAYS]
+        [req.user.tenant_id, req.user.site_id || null, bloodGroup, parsedUnits, DEFAULT_BLOOD_EXPIRY_DAYS]
       );
     }
 
@@ -154,7 +160,7 @@ const recordDonation = async (req, res) => {
       action: 'DONATION_RECORDED',
       entityType: 'donor',
       entityId: donor_id,
-      details: { units_donated, blood_group: bloodGroup }
+      details: { units_donated: parsedUnits, blood_group: bloodGroup }
     });
 
     res.json({
@@ -162,7 +168,7 @@ const recordDonation = async (req, res) => {
       donor: updateResult.rows[0]
     });
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to record donation', error);
     res.status(500).json({ error: 'Failed to record donation' });
   }
 };
@@ -170,8 +176,6 @@ const recordDonation = async (req, res) => {
 // Get Donation History
 const getDonationHistory = async (req, res) => {
   try {
-    await ensureWorkflowSchema();
-
     const { id } = req.params;
 
     const donorResult = await pool.query(
@@ -210,7 +214,7 @@ const getDonationHistory = async (req, res) => {
       donations: donationsResult.rows
     });
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch donation history', error);
     res.status(500).json({ error: 'Failed to fetch donation history' });
   }
 };
@@ -218,7 +222,6 @@ const getDonationHistory = async (req, res) => {
 // Get Donation History by User ID
 const getDonationHistoryByUserId = async (req, res) => {
   try {
-    await ensureWorkflowSchema();
 
     const { user_id } = req.params;
 
@@ -260,7 +263,7 @@ const getDonationHistoryByUserId = async (req, res) => {
       donations: donationsResult.rows
     });
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch donation history by user', error);
     res.status(500).json({ error: 'Failed to fetch donation history' });
   }
 };

@@ -9,6 +9,8 @@ const authenticateToken = async (req, res, next) => {
     return res.status(401).json({ error: 'Access token missing' });
   }
 
+  let releaseClient = null;
+
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     let tenantId = decoded.tenant_id;
@@ -30,7 +32,7 @@ const authenticateToken = async (req, res, next) => {
 
     const client = await pool.connect();
     let released = false;
-    const releaseClient = () => {
+    releaseClient = () => {
       if (!released) {
         released = true;
         client.release();
@@ -81,9 +83,8 @@ const authenticateToken = async (req, res, next) => {
       () => next()
     );
   } catch (err) {
-    if (req.dbClient) {
-      req.dbClient.release();
-      req.dbClient = null;
+    if (releaseClient) {
+      releaseClient();
     }
     return res.status(403).json({ error: 'Invalid or expired token' });
   }

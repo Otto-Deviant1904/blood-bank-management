@@ -1,6 +1,7 @@
 const pool = require('../config/database');
-const { REQUEST_STATUSES, ensureWorkflowSchema } = require('../utils/workflow');
+const { REQUEST_STATUSES } = require('../utils/workflow');
 const { writeAuditLog } = require('../utils/audit');
+const logger = require('../utils/logger');
 
 // Get Recipient Profile
 const getRecipientProfile = async (req, res) => {
@@ -18,7 +19,7 @@ const getRecipientProfile = async (req, res) => {
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch recipient profile', error);
     res.status(500).json({ error: 'Failed to fetch recipient profile' });
   }
 };
@@ -39,7 +40,7 @@ const getRecipientProfileByUserId = async (req, res) => {
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch recipient profile', error);
     res.status(500).json({ error: 'Failed to fetch recipient profile' });
   }
 };
@@ -49,7 +50,6 @@ const createBloodRequest = async (req, res) => {
   const client = await pool.connect();
   let transactionActive = false;
   try {
-    await ensureWorkflowSchema();
 
     const { recipient_id, units_requested, urgency_flag, blood_group_needed, hospital_location } = req.body;
 
@@ -110,7 +110,7 @@ const createBloodRequest = async (req, res) => {
     if (transactionActive) {
       await client.query('ROLLBACK');
     }
-    console.error(error);
+    logger.error('Failed to create blood request', error);
     res.status(500).json({ error: 'Failed to create blood request' });
   } finally {
     client.release();
@@ -133,7 +133,7 @@ const getBloodRequestStatus = async (req, res) => {
 
     res.json(result.rows[0]);
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch blood request status', error);
     res.status(500).json({ error: 'Failed to fetch request status' });
   }
 };
@@ -141,7 +141,6 @@ const getBloodRequestStatus = async (req, res) => {
 // Search Blood Requests
 const searchBloodRequests = async (req, res) => {
   try {
-    await ensureWorkflowSchema();
 
     const { status, urgency_flag, recipient_id, blood_group } = req.query;
     let query = `SELECT br.*, r.blood_group_needed, r.name AS recipient_name
@@ -190,7 +189,7 @@ const searchBloodRequests = async (req, res) => {
     const result = await pool.query(query, values);
     res.json(result.rows);
   } catch (error) {
-    console.error(error);
+    logger.error('Blood request search failed', error);
     res.status(500).json({ error: 'Search failed' });
   }
 };
@@ -198,7 +197,6 @@ const searchBloodRequests = async (req, res) => {
 // Get Request History
 const getRequestHistory = async (req, res) => {
   try {
-    await ensureWorkflowSchema();
 
     const { recipient_id } = req.params;
 
@@ -215,7 +213,7 @@ const getRequestHistory = async (req, res) => {
 
     res.json(result.rows);
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch request history', error);
     res.status(500).json({ error: 'Failed to fetch request history' });
   }
 };
@@ -223,7 +221,6 @@ const getRequestHistory = async (req, res) => {
 // Get Request History by User ID
 const getRequestHistoryByUserId = async (req, res) => {
   try {
-    await ensureWorkflowSchema();
 
     const { user_id } = req.params;
 
@@ -240,7 +237,7 @@ const getRequestHistoryByUserId = async (req, res) => {
 
     res.json(result.rows);
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch request history by user', error);
     res.status(500).json({ error: 'Failed to fetch request history' });
   }
 };

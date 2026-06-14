@@ -1,42 +1,32 @@
 const pool = require('../config/database');
+const logger = require('../utils/logger');
 const DEFAULT_AUDIT_LIMIT = 100;
 const MAX_AUDIT_LIMIT = 500;
 
 // Get System Summary Statistics
 const getSummary = async (req, res) => {
   try {
-    const stats = {};
+    const tid = req.user.tenant_id;
+    const [donorCount, recipientCount, requestCount, completedCount, unitsIssued, totalStock] =
+      await Promise.all([
+        pool.query('SELECT COUNT(*) FROM donor WHERE tenant_id = $1', [tid]),
+        pool.query('SELECT COUNT(*) FROM recipient WHERE tenant_id = $1', [tid]),
+        pool.query('SELECT COUNT(*) FROM blood_request WHERE tenant_id = $1', [tid]),
+        pool.query("SELECT COUNT(*) FROM blood_request WHERE status = 'COMPLETED' AND tenant_id = $1", [tid]),
+        pool.query('SELECT SUM(units_issued) FROM blood_issue WHERE tenant_id = $1', [tid]),
+        pool.query('SELECT SUM(units_available) FROM blood_stock WHERE tenant_id = $1', [tid]),
+      ]);
 
-    // Total donors
-    const donorCount = await pool.query('SELECT COUNT(*) FROM donor WHERE tenant_id = $1', [req.user.tenant_id]);
-    stats.total_donors = parseInt(donorCount.rows[0].count);
-
-    // Total recipients
-    const recipientCount = await pool.query('SELECT COUNT(*) FROM recipient WHERE tenant_id = $1', [req.user.tenant_id]);
-    stats.total_recipients = parseInt(recipientCount.rows[0].count);
-
-    // Total blood requests
-    const requestCount = await pool.query('SELECT COUNT(*) FROM blood_request WHERE tenant_id = $1', [req.user.tenant_id]);
-    stats.total_requests = parseInt(requestCount.rows[0].count);
-
-    // Completed requests
-    const completedCount = await pool.query(
-      "SELECT COUNT(*) FROM blood_request WHERE status = 'COMPLETED' AND tenant_id = $1",
-      [req.user.tenant_id]
-    );
-    stats.fulfilled_requests = parseInt(completedCount.rows[0].count);
-
-    // Total units issued
-    const unitsIssued = await pool.query('SELECT SUM(units_issued) FROM blood_issue WHERE tenant_id = $1', [req.user.tenant_id]);
-    stats.total_units_issued = parseInt(unitsIssued.rows[0].sum) || 0;
-
-    // Total stock available
-    const totalStock = await pool.query('SELECT SUM(units_available) FROM blood_stock WHERE tenant_id = $1', [req.user.tenant_id]);
-    stats.total_stock_available = parseInt(totalStock.rows[0].sum) || 0;
-
-    res.json(stats);
+    res.json({
+      total_donors: parseInt(donorCount.rows[0].count),
+      total_recipients: parseInt(recipientCount.rows[0].count),
+      total_requests: parseInt(requestCount.rows[0].count),
+      fulfilled_requests: parseInt(completedCount.rows[0].count),
+      total_units_issued: parseInt(unitsIssued.rows[0].sum) || 0,
+      total_stock_available: parseInt(totalStock.rows[0].sum) || 0,
+    });
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch summary stats', error);
     res.status(500).json({ error: 'Failed to fetch summary' });
   }
 };
@@ -57,7 +47,7 @@ const getBloodUsage = async (req, res) => {
 
     res.json(result.rows);
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch blood usage data', error);
     res.status(500).json({ error: 'Failed to fetch blood usage data' });
   }
 };
@@ -76,7 +66,7 @@ const getDonorStats = async (req, res) => {
 
     res.json(result.rows);
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch donor stats', error);
     res.status(500).json({ error: 'Failed to fetch donor statistics' });
   }
 };
@@ -95,7 +85,7 @@ const getRecipientStats = async (req, res) => {
 
     res.json(result.rows);
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch recipient stats', error);
     res.status(500).json({ error: 'Failed to fetch recipient statistics' });
   }
 };
@@ -137,7 +127,7 @@ const getFilteredReports = async (req, res) => {
     const result = await pool.query(query, values);
     res.json(result.rows);
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch filtered reports', error);
     res.status(500).json({ error: 'Failed to fetch filtered reports' });
   }
 };
@@ -156,7 +146,7 @@ const getRequestStatusDistribution = async (req, res) => {
 
     res.json(result.rows);
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch request status distribution', error);
     res.status(500).json({ error: 'Failed to fetch request status distribution' });
   }
 };
@@ -200,7 +190,7 @@ const getAuditLogs = async (req, res) => {
     const result = await pool.query(query, values);
     res.json(result.rows);
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch audit logs', error);
     res.status(500).json({ error: 'Failed to fetch audit logs' });
   }
 };

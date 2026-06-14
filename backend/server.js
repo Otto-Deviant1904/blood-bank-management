@@ -6,6 +6,7 @@ const { ensureBaseSchema } = require('./utils/baseSchema');
 const { ensureWorkflowSchema } = require('./utils/workflow');
 const { ensureTenantSchema } = require('./utils/tenantSchema');
 const { apiRateLimiter } = require('./middleware/rateLimit');
+const logger = require('./utils/logger');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -73,7 +74,7 @@ app.use((req, res) => {
 
 // Error handler
 app.use((err, req, res, next) => {
-  console.error(err);
+  logger.error('Unhandled error', err);
   res.status(500).json({ error: 'Internal server error' });
 });
 
@@ -81,11 +82,11 @@ const PORT = process.env.PORT || 5000;
 initializeDatabase()
   .then(() => {
     app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-      console.log(`Environment: ${process.env.NODE_ENV}`);
+      logger.info('Server running', { port: PORT });
+      logger.info('Environment', { env: process.env.NODE_ENV });
     });
   })
   .catch((error) => {
-    console.error('Database initialization failed:', error);
+    logger.error('Database initialization failed', error);
     process.exit(1);
   });

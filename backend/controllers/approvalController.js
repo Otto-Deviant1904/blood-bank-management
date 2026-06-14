@@ -1,23 +1,16 @@
 const pool = require('../config/database');
-const { REQUEST_STATUSES, ensureWorkflowSchema } = require('../utils/workflow');
+const { REQUEST_STATUSES } = require('../utils/workflow');
 const { writeAuditLog } = require('../utils/audit');
+const logger = require('../utils/logger');
 
 // Create Approval
 const createApproval = async (req, res) => {
-  try {
-    await ensureWorkflowSchema();
-    res.status(400).json({ error: 'Use request verification and match endpoints instead' });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Failed to create approval' });
-  }
+  res.status(400).json({ error: 'Use request verification and match endpoints instead' });
 };
 
 // Update Approval Status
 const updateApprovalStatus = async (req, res) => {
   try {
-    await ensureWorkflowSchema();
-
     const { id } = req.params;
     const { status } = req.body;
 
@@ -57,7 +50,7 @@ const updateApprovalStatus = async (req, res) => {
       request: result.rows[0]
     });
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to update approval status', error);
     res.status(500).json({ error: 'Failed to update approval status' });
   }
 };
@@ -65,8 +58,6 @@ const updateApprovalStatus = async (req, res) => {
 // Get Approval History
 const getApprovalHistory = async (req, res) => {
   try {
-    await ensureWorkflowSchema();
-
     const result = await pool.query(
       `SELECT
          br.request_id AS approval_id,
@@ -104,14 +95,13 @@ const getApprovalHistory = async (req, res) => {
        ) da_latest ON TRUE
         LEFT JOIN donor d ON da_latest.donor_id = d.donor_id
         WHERE br.tenant_id = $1
-        ORDER BY br.created_at DESC`
-      ,
+        ORDER BY br.created_at DESC`,
       [req.user.tenant_id]
     );
 
     res.json(result.rows);
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch approval history', error);
     res.status(500).json({ error: 'Failed to fetch approval history' });
   }
 };
@@ -120,7 +110,6 @@ const getApprovalHistory = async (req, res) => {
 const issueBlood = async (req, res) => {
   const client = await pool.connect();
   try {
-    await ensureWorkflowSchema();
     const { blood_request_id } = req.body;
 
     await client.query('BEGIN');
@@ -177,7 +166,7 @@ const issueBlood = async (req, res) => {
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error(error);
+    logger.error('Failed to issue blood', error);
     res.status(500).json({ error: 'Failed to mark request as fulfilled' });
   } finally {
     client.release();
@@ -194,14 +183,13 @@ const getIssueHistory = async (req, res) => {
        JOIN recipient r ON br.recipient_id = r.recipient_id
        JOIN blood_stock bs ON bi.stock_id = bs.stock_id
        WHERE br.tenant_id = $1
-       ORDER BY bi.issue_date DESC`
-      ,
+       ORDER BY bi.issue_date DESC`,
       [req.user.tenant_id]
     );
 
     res.json(result.rows);
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch issue history', error);
     res.status(500).json({ error: 'Failed to fetch issue history' });
   }
 };

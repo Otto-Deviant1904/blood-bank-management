@@ -1,8 +1,13 @@
 const { body, validationResult } = require('express-validator');
 
 const validateDonorRegistration = [
-  body('username').notEmpty().withMessage('Username is required'),
-  body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
+  body('username')
+    .notEmpty().withMessage('Username is required')
+    .isLength({ min: 3, max: 50 }).withMessage('Username must be between 3 and 50 characters')
+    .matches(/^[a-zA-Z0-9_]+$/).withMessage('Username may only contain letters, numbers, and underscores'),
+  body('password')
+    .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
+    .matches(/[0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/).withMessage('Password must contain at least one number or special character'),
   body('name').notEmpty().withMessage('Name is required'),
   body('age').isInt({ min: 18, max: 65 }).withMessage('Age must be between 18 and 65'),
   body('blood_group').isIn(['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']).withMessage('Invalid blood group'),
@@ -12,8 +17,13 @@ const validateDonorRegistration = [
 ];
 
 const validateRecipientRegistration = [
-  body('username').notEmpty().withMessage('Username is required'),
-  body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
+  body('username')
+    .notEmpty().withMessage('Username is required')
+    .isLength({ min: 3, max: 50 }).withMessage('Username must be between 3 and 50 characters')
+    .matches(/^[a-zA-Z0-9_]+$/).withMessage('Username may only contain letters, numbers, and underscores'),
+  body('password')
+    .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
+    .matches(/[0-9!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/).withMessage('Password must contain at least one number or special character'),
   body('name').notEmpty().withMessage('Name is required'),
   body('blood_group_needed').isIn(['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-']).withMessage('Invalid blood group'),
   body('hospital').notEmpty().withMessage('Hospital name is required'),

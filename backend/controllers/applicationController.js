@@ -1,12 +1,11 @@
 const pool = require('../config/database');
-const { REQUEST_STATUSES, ensureWorkflowSchema } = require('../utils/workflow');
+const { REQUEST_STATUSES } = require('../utils/workflow');
 const { writeAuditLog } = require('../utils/audit');
+const logger = require('../utils/logger');
 
 const applyToRequest = async (req, res) => {
   const client = await pool.connect();
   try {
-    await ensureWorkflowSchema();
-
     const { request_id, message } = req.body;
 
     await client.query('BEGIN');
@@ -89,7 +88,7 @@ const applyToRequest = async (req, res) => {
     if (error.code === '23505') {
       return res.status(400).json({ error: 'You have already applied for this request' });
     }
-    console.error(error);
+    logger.error('Failed to submit donation application', error);
     res.status(500).json({ error: 'Failed to submit application' });
   } finally {
     client.release();
@@ -98,8 +97,6 @@ const applyToRequest = async (req, res) => {
 
 const getMyApplications = async (req, res) => {
   try {
-    await ensureWorkflowSchema();
-
     const donorResult = await pool.query(
       'SELECT donor_id FROM donor WHERE user_id = $1 AND tenant_id = $2',
       [req.user.user_id, req.user.tenant_id]
@@ -123,15 +120,13 @@ const getMyApplications = async (req, res) => {
 
     res.json(result.rows);
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch my applications', error);
     res.status(500).json({ error: 'Failed to fetch applications' });
   }
 };
 
 const getApplicationsForRequest = async (req, res) => {
   try {
-    await ensureWorkflowSchema();
-
     const { request_id } = req.params;
 
     const requestResult = await pool.query(
@@ -165,7 +160,7 @@ const getApplicationsForRequest = async (req, res) => {
 
     res.json(result.rows);
   } catch (error) {
-    console.error(error);
+    logger.error('Failed to fetch applications for request', error);
     res.status(500).json({ error: 'Failed to fetch applications for request' });
   }
 };
@@ -173,8 +168,6 @@ const getApplicationsForRequest = async (req, res) => {
 const updateApplicationStatus = async (req, res) => {
   const client = await pool.connect();
   try {
-    await ensureWorkflowSchema();
-
     const { id } = req.params;
     const { status } = req.body;
 
@@ -257,7 +250,7 @@ const updateApplicationStatus = async (req, res) => {
     });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error(error);
+    logger.error('Failed to update application status', error);
     res.status(500).json({ error: 'Failed to update application status' });
   } finally {
     client.release();

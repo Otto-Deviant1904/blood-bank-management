@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
 const { writeAuditLog } = require('../utils/audit');
+const logger = require('../utils/logger');
 
 const resolveTenantContext = async (client, tenantCode, siteCode) => {
   const organizationResult = await client.query(
@@ -172,10 +173,10 @@ const register = async (req, res) => {
       try {
         await client.query('ROLLBACK');
       } catch (rollbackError) {
-        console.error('Rollback failed:', rollbackError.message);
+        logger.error('Rollback failed', rollbackError);
       }
     }
-    console.error(error);
+    logger.error('Registration error', error);
 
     if (error.code === '23505') {
       if (error.constraint === 'donor_phone_key') {
@@ -319,7 +320,7 @@ const login = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error(error);
+    logger.error('Login error', error);
     res.status(500).json({ error: 'Login failed' });
   } finally {
     client.release();
